@@ -1,26 +1,7 @@
 const express = require("express");
 const db = require("../db");
+const { refreshCurrentHolder } = require("../utils/heirloomHolder");
 const router = express.Router();
-
-function refreshCurrentHolder(heirloomId) {
-  const latest = db
-    .prepare(
-      `
-    SELECT to_member_id FROM inheritances
-    WHERE heirloom_id = ?
-    ORDER BY DATE(inherited_at) DESC, id DESC
-    LIMIT 1
-  `,
-    )
-    .get(heirloomId);
-
-  if (latest) {
-    db.prepare("UPDATE heirlooms SET current_holder_id = ? WHERE id = ?").run(
-      latest.to_member_id,
-      heirloomId,
-    );
-  }
-}
 
 router.get("/", (req, res) => {
   const { heirloom_id, from_member_id, to_member_id } = req.query;
