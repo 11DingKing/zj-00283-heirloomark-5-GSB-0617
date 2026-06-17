@@ -1,26 +1,7 @@
 const express = require("express");
 const db = require("../db");
+const { refreshCurrentHolder } = require("../utils/derivations");
 const router = express.Router();
-
-function refreshCurrentHolder(heirloomId) {
-  const latest = db
-    .prepare(
-      `
-    SELECT to_member_id FROM inheritances
-    WHERE heirloom_id = ?
-    ORDER BY DATE(inherited_at) DESC, id DESC
-    LIMIT 1
-  `,
-    )
-    .get(heirloomId);
-
-  if (latest) {
-    db.prepare("UPDATE heirlooms SET current_holder_id = ? WHERE id = ?").run(
-      latest.to_member_id,
-      heirloomId,
-    );
-  }
-}
 
 router.get("/", (req, res) => {
   const { heirloom_id, from_member_id, to_member_id } = req.query;
@@ -106,7 +87,7 @@ router.post("/", (req, res) => {
         note || null,
       );
 
-    refreshCurrentHolder(heirloom_id);
+    refreshCurrentHolder(db, heirloom_id);
 
     return result.lastInsertRowid;
   });
@@ -138,7 +119,7 @@ router.put("/:id", (req, res) => {
       req.params.id,
     );
 
-    refreshCurrentHolder(existing.heirloom_id);
+    refreshCurrentHolder(db, existing.heirloom_id);
   });
 
   tx();
@@ -157,7 +138,7 @@ router.delete("/:id", (req, res) => {
 
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM inheritances WHERE id = ?").run(req.params.id);
-    refreshCurrentHolder(existing.heirloom_id);
+    refreshCurrentHolder(db, existing.heirloom_id);
   });
 
   tx();
