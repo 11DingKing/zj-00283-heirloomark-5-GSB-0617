@@ -1,24 +1,7 @@
 const express = require("express");
 const db = require("../db");
+const { computeVerificationStatus } = require("../utils/verification");
 const router = express.Router();
-
-const VERIFY_THRESHOLD = 2;
-
-function isDirectElder(verifierId, narratorMemberId) {
-  if (!narratorMemberId) return true;
-  let currentId = narratorMemberId;
-  const visited = new Set();
-  while (currentId && !visited.has(currentId)) {
-    visited.add(currentId);
-    const row = db
-      .prepare("SELECT parent_id FROM members WHERE id = ?")
-      .get(currentId);
-    if (!row) return false;
-    if (row.parent_id === verifierId) return true;
-    currentId = row.parent_id;
-  }
-  return false;
-}
 
 function isOfSameFamily(verifierId, narrativeId) {
   const row = db
@@ -54,23 +37,15 @@ function recountVerifications(narrativeId) {
 
   const confirmed = counts.confirmed_count || 0;
   const doubted = counts.doubted_count || 0;
-
-  let status = "pending";
-  let verifiedAt = null;
-  if (doubted > 0) {
-    status = "disputed";
-  } else if (confirmed >= VERIFY_THRESHOLD) {
-    status = "verified";
-    verifiedAt = new Date().toISOString().split("T")[0];
-  }
+  const { status, verified_at } = computeVerificationStatus(confirmed, doubted);
 
   db.prepare(
     `
     UPDATE narratives
-    SET confirmed_count = ?, doubted_count = ?, status = ?, verified_at = COALESCE(?, verified_at)
+    SET confirmed_count = ?, doubted_count = ?, status = ?, verified_at = ?
     WHERE id = ?
   `,
-  ).run(confirmed, doubted, status, verifiedAt, narrativeId);
+  ).run(confirmed, doubted, status, verified_at, narrativeId);
 
   return { confirmed, doubted, status };
 }
@@ -191,8 +166,7 @@ router.post("/", (req, res) => {
   const submitter = db
     .prepare("SELECT * FROM members WHERE id = ?")
     .get(submitter_member_id);
-  if (!submitter)
-    return res.status(404).json({ error: "提交人成员不存在" });
+  if (!submitter) return res.status(404).json({ error: "提交人成员不存在" });
 
   const tx = db.transaction(() => {
     const result = db
@@ -243,9 +217,7 @@ router.post("/:id/verify", (req, res) => {
   const { verifier_member_id, verdict, note } = req.body;
 
   if (!verifier_member_id || !verdict) {
-    return res
-      .status(400)
-      .json({ error: "verifier_member_id、verdict 必填" });
+    return res.status(400).json({ error: "verifier_member_id、verdict 必填" });
   }
   if (!["confirmed", "doubted"].includes(verdict)) {
     return res
@@ -259,21 +231,18 @@ router.post("/:id/verify", (req, res) => {
   if (!verifier) return res.status(404).json({ error: "验证人成员不存在" });
 
   if (!isOfSameFamily(verifier_member_id, req.params.id)) {
-    return res
-      .status(403)
-      .json({ error: "仅同一家族成员可进行验证" });
+    return res.status(403).json({ error: "仅同一家族成员可进行验证" });
   }
 
   if (verifier_member_id === narrative.submitter_member_id) {
-    return res
-      .status(403)
-      .json({ error: "提交人本人不能验证自己提交的叙事" });
+    return res.status(403).json({ error: "提交人本人不能验证自己提交的叙事" });
   }
 
-  if (narrative.narrator_member_id && verifier_member_id === narrative.narrator_member_id) {
-    return res
-      .status(403)
-      .json({ error: "讲述人本人不能验证自己的叙事" });
+  if (
+    narrative.narrator_member_id &&
+    verifier_member_id === narrative.narrator_member_id
+  ) {
+    return res.status(403).json({ error: "讲述人本人不能验证自己的叙事" });
   }
 
   const tx = db.transaction(() => {
